@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/layou233/zbproxy/v3/adapter"
 	"github.com/layou233/zbproxy/v3/common"
@@ -43,7 +44,7 @@ type Outbound struct {
 	dialer network.Dialer
 
 	hostnameAccessLists []set.StringSet
-	nameAccessLists     []set.StringSet
+	nameAccessLists     map[string]int64 // player name → expiry unix timestamp
 	onlineCount         atomic.Int32
 }
 
@@ -81,7 +82,7 @@ func (o *Outbound) PostInitialize(router adapter.Router, provider adapter.RouteR
 		}
 	}
 	if o.config.Minecraft.NameAccess.Mode != access.DefaultMode {
-		o.nameAccessLists, err = fetchNameListsFromAPI()
+		o.nameAccessLists, err = fetchNameListsFromAPI(o.config.Minecraft.NameAccess.LowerCase)
 		if err != nil {
 			return common.Cause("fetch name lists from API: ", err)
 		}
@@ -370,7 +371,8 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 			if o.config.Minecraft.NameAccess.LowerCase {
 				name = strings.ToLower(metadata.Minecraft.PlayerName)
 			}
-			if !access.Check(o.nameAccessLists, o.config.Minecraft.NameAccess.Mode, name) {
+			expiry, exists := o.nameAccessLists[name]
+			if !exists || time.Now().Unix() >= expiry {
 				msg, err := generateKickMessage(o.config, metadata.Minecraft.PlayerName).MarshalJSON()
 				if err != nil { // almost impossible
 					o.access.RUnlock()
@@ -483,18 +485,19 @@ func (o *Outbound) DialContext(context.Context, string, string) (net.Conn, error
 
 // nameListAPIResponse is the JSON structure returned by the name list API.
 type nameListAPIResponse struct {
-	Code int      `json:"code"`
-	Data []string `json:"data"`
+	Code int               `json:"code"`
+	Data map[string]string `json:"data"` // player name → expiry timestamp (string)
 }
 
-// fetchNameListsFromAPI fetches name access lists dynamically from the remote API.
+// fetchNameListsFromAPI fetches player subscription expiry data from the remote API.
 // The API returns a JSON object of the form:
 //
-//	{"code": 200, "data": ["player1", "player2"]}
+//	{"code": 200, "data": {"player1": "1730000000", "player2": "1740000000"}}
 //
-// The data array is converted into a single set.StringSet.
-func fetchNameListsFromAPI() ([]set.StringSet, error) {
-	resp, err := http.Get("https://hypixel-service.stoeaves.com/getNameLists")
+// Each value is a Unix timestamp string (seconds). If lowerCase is true, player names
+// are stored in lowercase for case-insensitive matching.
+func fetchNameListsFromAPI(lowerCase bool) (map[string]int64, error) {
+	resp, err := http.Get("https://hypixel.stoeaves.com/api/getNameLists")
 	if err != nil {
 		return nil, fmt.Errorf("http get: %w", err)
 	}
@@ -519,5 +522,16 @@ func fetchNameListsFromAPI() ([]set.StringSet, error) {
 		return nil, fmt.Errorf("API returned non-200 code: %d", apiResp.Code)
 	}
 
-	return []set.StringSet{set.NewStringSetFromSlice(apiResp.Data)}, nil
+	result := make(map[string]int64, len(apiResp.Data))
+	for name, tsStr := range apiResp.Data {
+		ts, err := strconv.ParseInt(tsStr, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse timestamp for %s: %w", name, err)
+		}
+		if lowerCase {
+			name = strings.ToLower(name)
+		}
+		result[name] = ts
+	}
+	return result, nil
 }

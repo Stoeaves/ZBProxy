@@ -3,9 +3,12 @@ package minecraft
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/netip"
 	"net/url"
 	"strconv"
@@ -78,9 +81,9 @@ func (o *Outbound) PostInitialize(router adapter.Router, provider adapter.RouteR
 		}
 	}
 	if o.config.Minecraft.NameAccess.Mode != access.DefaultMode {
-		o.nameAccessLists, err = provider.FindListsByTag(o.config.Minecraft.NameAccess.ListTags)
+		o.nameAccessLists, err = fetchNameListsFromAPI()
 		if err != nil {
-			return common.Cause("load access control lists: ", err)
+			return common.Cause("fetch name lists from API: ", err)
 		}
 	}
 	if o.config.Minecraft.MotdFavicon == "{DEFAULT_MOTD}" {
@@ -476,4 +479,45 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 
 func (o *Outbound) DialContext(context.Context, string, string) (net.Conn, error) {
 	return nil, adapter.ErrInjectionRequired
+}
+
+// nameListAPIResponse is the JSON structure returned by the name list API.
+type nameListAPIResponse struct {
+	Code int      `json:"code"`
+	Data []string `json:"data"`
+}
+
+// fetchNameListsFromAPI fetches name access lists dynamically from the remote API.
+// The API returns a JSON object of the form:
+//
+//	{"code": 200, "data": ["player1", "player2"]}
+//
+// The data array is converted into a single set.StringSet.
+func fetchNameListsFromAPI() ([]set.StringSet, error) {
+	resp, err := http.Get("https://hypixel-service.stoeaves.com/getNameLists")
+	if err != nil {
+		return nil, fmt.Errorf("http get: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected HTTP status: %s", resp.Status)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	var apiResp nameListAPIResponse
+	err = json.Unmarshal(body, &apiResp)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal json: %w", err)
+	}
+
+	if apiResp.Code != 200 {
+		return nil, fmt.Errorf("API returned non-200 code: %d", apiResp.Code)
+	}
+
+	return []set.StringSet{set.NewStringSetFromSlice(apiResp.Data)}, nil
 }

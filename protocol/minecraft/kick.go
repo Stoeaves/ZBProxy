@@ -12,26 +12,27 @@ func generateKickMessage(s *config.Outbound, name string) mcprotocol.Message {
 	return mcprotocol.Message{
 		Color: mcprotocol.White,
 		Extra: []mcprotocol.Message{
-			{Bold: true, Color: mcprotocol.Red, Text: "ZB"},
-			{Bold: true, Text: "Proxy"},
+			{Bold: true, Color: mcprotocol.Red, Text: "温馨"},
+			{Bold: true, Text: "提示"},
 			{Text: " - "},
-			{Bold: true, Color: mcprotocol.Gold, Text: "Connection Rejected\n"},
+			{Bold: true, Color: mcprotocol.Gold, Text: "连接失败\n"},
 
-			{Text: "Your connection request is refused by ZBProxy.\n"},
-			{Text: "Reason: "},
-			{Color: mcprotocol.LightPurple, Text: "You don't have permission to access this service.\n"},
-			{Text: "Please contact the Administrators for help.\n\n"},
+			{Text: "您的连接已被拒绝\n"},
+			{Text: "原因: "},
+			{Color: mcprotocol.LightPurple, Text: "您没有权限访问此服务器\n"},
+			{Text: "请检查服务是否过期或者是否购买\n"},
+			{Color: mcprotocol.Gold, Text: "若已购买请稍等片刻再连，数据同步需要时间\n\n"},
 
 			{
 				Color: mcprotocol.Gray,
-				Text: fmt.Sprintf("Timestamp: %d | Player Name: %s | Outbound: %s\n",
-					time.Now().UnixMilli(), name, s.Name),
+				Text: fmt.Sprintf("时间戳: %d | 玩家名: %s\n",
+					time.Now().UnixMilli(), name),
 			},
-			{Text: "GitHub: "},
+			{Text: "爱发电: "},
 			{
 				Color: mcprotocol.Aqua, UnderLined: true,
-				Text: "https://github.com/layou233/ZBProxy",
-				// ClickEvent: chat.OpenURL("https://github.com/layou233/ZBProxy"),
+				Text: "https://ifdian.net/a/stoeaves",
+				ClickEvent: chat.OpenURL("https://ifdian.net/a/stoeaves"),
 			},
 		},
 	}
@@ -41,26 +42,26 @@ func generatePlayerNumberLimitExceededMessage(s *config.Outbound, name string) m
 	return mcprotocol.Message{
 		Color: mcprotocol.White,
 		Extra: []mcprotocol.Message{
-			{Bold: true, Color: mcprotocol.Red, Text: "ZB"},
-			{Bold: true, Text: "Proxy"},
+			{Bold: true, Color: mcprotocol.Red, Text: "温馨"},
+			{Bold: true, Text: "提示"},
 			{Text: " - "},
-			{Bold: true, Color: mcprotocol.Gold, Text: "Connection Rejected\n"},
+			{Bold: true, Color: mcprotocol.Gold, Text: "连接失败\n"},
 
-			{Text: "Your connection request is refused by ZBProxy.\n"},
-			{Text: "Reason: "},
-			{Color: mcprotocol.LightPurple, Text: "Service online player number limitation exceeded.\n"},
-			{Text: "Please contact the Administrators for help.\n\n"},
+			{Text: "您的连接已被拒绝\n"},
+			{Text: "原因: "},
+			{Color: mcprotocol.LightPurple, Text: "服务器最大人数已达到上限\n"},
+			{Text: "联系管理员寻求帮助\n\n"},
 
 			{
 				Color: mcprotocol.Gray,
-				Text: fmt.Sprintf("Timestamp: %d | Player Name: %s | Outbound: %s\n",
-					time.Now().UnixMilli(), name, s.Name),
+				Text: fmt.Sprintf("时间戳: %d | 玩家名: %s\n",
+					time.Now().UnixMilli(), name),
 			},
-			{Text: "GitHub: "},
+			{Text: "爱发电: "},
 			{
 				Color: mcprotocol.Aqua, UnderLined: true,
-				Text: "https://github.com/layou233/ZBProxy",
-				// ClickEvent: chat.OpenURL("https://github.com/layou233/ZBProxy"),
+				Text: "https://ifdian.net/a/stoeaves",
+				ClickEvent: chat.OpenURL("https://ifdian.net/a/stoeaves"),
 			},
 		},
 	}

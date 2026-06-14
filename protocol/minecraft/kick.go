@@ -32,7 +32,6 @@ func generateKickMessage(s *config.Outbound, name string) mcprotocol.Message {
 			{
 				Color: mcprotocol.Aqua, UnderLined: true,
 				Text: "https://ifdian.net/a/stoeaves",
-				ClickEvent: chat.OpenURL("https://ifdian.net/a/stoeaves"),
 			},
 		},
 	}
@@ -61,7 +60,6 @@ func generatePlayerNumberLimitExceededMessage(s *config.Outbound, name string) m
 			{
 				Color: mcprotocol.Aqua, UnderLined: true,
 				Text: "https://ifdian.net/a/stoeaves",
-				ClickEvent: chat.OpenURL("https://ifdian.net/a/stoeaves"),
 			},
 		},
 	}

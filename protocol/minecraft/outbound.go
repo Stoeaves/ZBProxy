@@ -524,8 +524,10 @@ func (o *Outbound) DialContext(context.Context, string, string) (net.Conn, error
 
 // uuidSystemAPIResponse is the JSON structure returned by the UUID system API.
 type uuidSystemAPIResponse struct {
-	Code        int   `json:"code"`
-	ExpiredTime int64 `json:"expiredTime"` // Unix timestamp in seconds
+	Code int `json:"code"`
+	Data struct {
+		ExpiredTime int64 `json:"expiredTime"` // Unix timestamp in seconds
+	} `json:"data"`
 }
 
 // queryPlayerSubscription queries the UUID system API to check a player's
@@ -569,7 +571,7 @@ func queryPlayerSubscription(name, uuid, planId string) (allowed bool, nameUpdat
 	switch apiResp.Code {
 	case 200:
 		// Check if expired: current time >= expiredTime means expired
-		if time.Now().Unix() >= apiResp.ExpiredTime {
+		if time.Now().Unix() >= apiResp.Data.ExpiredTime {
 			return false, false, nil // expired → kick with generateKickMessage
 		}
 		return true, false, nil // valid → allow

@@ -615,7 +615,9 @@ func queryPlayerSubscription(logger *log.Logger, name, uuid, planId string) (all
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return false, false, fmt.Errorf("unexpected HTTP status: %s", resp.Status)
+		body, _ := io.ReadAll(resp.Body)
+		logger.Warn().Str("status", resp.Status).Str("body", string(body)).Msg("UUID system API returned non-200")
+		return false, false, fmt.Errorf("unexpected HTTP status %s: %s", resp.Status, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)

@@ -64,3 +64,29 @@ func generatePlayerNumberLimitExceededMessage(s *config.Outbound, name string) m
 		},
 	}
 }
+
+func generatePlayerNameUpdated(s *config.Outbound, name string) mcprotocol.Message {
+	return mcprotocol.Message{
+		Color: mcprotocol.White,
+		Extra: []mcprotocol.Message{
+			{Bold: true, Color: mcprotocol.Red, Text: "温馨"},
+			{Bold: true, Text: "提示"},
+			{Text: "\n"},
+
+			{Text: "已检测到您的游戏ID已修改\n"},
+			{Color: mcprotocol.LightPurple, Text: "已自动为您修改绑定套餐的游戏ID\n"},
+			{Text: "请重新进入服务器\n\n"},
+
+			{
+				Color: mcprotocol.Gray,
+				Text: fmt.Sprintf("时间戳: %d | 玩家名: %s\n",
+					time.Now().UnixMilli(), name),
+			},
+			{Text: "爱发电: "},
+			{
+				Color: mcprotocol.Aqua, UnderLined: true,
+				Text: "https://ifdian.net/a/stoeaves",
+			},
+		},
+	}
+}

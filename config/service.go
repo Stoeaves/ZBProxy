@@ -17,9 +17,11 @@ type Service struct {
 }
 
 type access struct {
-	Mode      string   // 'accept' or 'deny' or empty
-	ListTags  []string `json:",omitempty"`
-	LowerCase bool     `json:",omitempty"`
+	Mode        string   // 'allow', 'block', 'search', or empty
+	ListTags    []string `json:",omitempty"`
+	LowerCase   bool     `json:",omitempty"`
+	SearchParam string   `json:",omitempty"` // for search mode, e.g. "planId"
+	PlanId      string   `json:",omitempty"` // planId value passed to API
 }
 
 type MinecraftService struct {

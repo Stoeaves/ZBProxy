@@ -44,7 +44,7 @@ type Outbound struct {
 	dialer network.Dialer
 
 	hostnameAccessLists []set.StringSet
-	nameAccessLists     map[string]int64 // player name → expiry unix timestamp
+	nameAccessLists     []set.StringSet
 	onlineCount         atomic.Int32
 }
 
@@ -81,10 +81,12 @@ func (o *Outbound) PostInitialize(router adapter.Router, provider adapter.RouteR
 			return common.Cause("load access control lists: ", err)
 		}
 	}
-	if o.config.Minecraft.NameAccess.Mode != access.DefaultMode {
-		o.nameAccessLists, err = fetchNameListsFromAPI(o.config.Minecraft.NameAccess.LowerCase)
+	if o.config.Minecraft.NameAccess.Mode == "search" {
+		// Search mode: API is called per-connection, nothing to pre-fetch
+	} else if o.config.Minecraft.NameAccess.Mode != access.DefaultMode {
+		o.nameAccessLists, err = provider.FindListsByTag(o.config.Minecraft.NameAccess.ListTags)
 		if err != nil {
-			return common.Cause("fetch name lists from API: ", err)
+			return common.Cause("load access control lists: ", err)
 		}
 	}
 	if o.config.Minecraft.MotdFavicon == "{DEFAULT_MOTD}" {
@@ -366,13 +368,50 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 	case mcprotocol.IntentLogin:
 		buffer := buf.New()
 		buffer.Reset(mcprotocol.MaxVarIntLen)
-		if o.config.Minecraft.NameAccess.Mode != access.DefaultMode {
+		if o.config.Minecraft.NameAccess.Mode == "search" {
+			if o.config.Minecraft.NameAccess.SearchParam == "planId" {
+				name := metadata.Minecraft.PlayerName
+				uuidStr := fmt.Sprintf("%x", metadata.Minecraft.UUID)
+				allowed, nameUpdated, err := queryPlayerSubscription(name, uuidStr, o.config.Minecraft.NameAccess.PlanId)
+				if err != nil {
+					o.access.RUnlock()
+					buffer.Release()
+					return common.Cause("query player subscription: ", err)
+				}
+				if !allowed {
+					var msg []byte
+					if nameUpdated {
+						msg, err = generatePlayerNameUpdated(o.config, metadata.Minecraft.PlayerName).MarshalJSON()
+					} else {
+						msg, err = generateKickMessage(o.config, metadata.Minecraft.PlayerName).MarshalJSON()
+					}
+					if err != nil {
+						o.access.RUnlock()
+						buffer.Release()
+						return common.Cause("generate kick message: ", err)
+					}
+					buffer.WriteByte(0)
+					mcprotocol.VarInt(len(msg)).WriteToBuffer(buffer)
+					err = mcprotocol.Conn{Writer: common.UnwrapWriter(conn)}.WriteVectorizedPacket(buffer, msg)
+					if err != nil {
+						o.access.RUnlock()
+						buffer.Release()
+						return common.Cause("send kick packet: ", err)
+					}
+					o.logger.Warn().Str("id", metadata.ConnectionID).Str("outbound", o.config.Name).
+						Str("player", metadata.Minecraft.PlayerName).Msg("Kicked by subscription check")
+					o.access.RUnlock()
+					conn.Conn.(*net.TCPConn).SetLinger(10)
+					buffer.Release()
+					return nil
+				}
+			}
+		} else if o.config.Minecraft.NameAccess.Mode != access.DefaultMode {
 			name := metadata.Minecraft.PlayerName
 			if o.config.Minecraft.NameAccess.LowerCase {
 				name = strings.ToLower(metadata.Minecraft.PlayerName)
 			}
-			expiry, exists := o.nameAccessLists[name]
-			if !exists || time.Now().Unix() >= expiry {
+			if !access.Check(o.nameAccessLists, o.config.Minecraft.NameAccess.Mode, name) {
 				msg, err := generateKickMessage(o.config, metadata.Minecraft.PlayerName).MarshalJSON()
 				if err != nil { // almost impossible
 					o.access.RUnlock()
@@ -483,55 +522,65 @@ func (o *Outbound) DialContext(context.Context, string, string) (net.Conn, error
 	return nil, adapter.ErrInjectionRequired
 }
 
-// nameListAPIResponse is the JSON structure returned by the name list API.
-type nameListAPIResponse struct {
-	Code int               `json:"code"`
-	Data map[string]string `json:"data"` // player name → expiry timestamp (string)
+// uuidSystemAPIResponse is the JSON structure returned by the UUID system API.
+type uuidSystemAPIResponse struct {
+	Code        int   `json:"code"`
+	ExpiredTime int64 `json:"expiredTime"` // Unix timestamp in seconds
 }
 
-// fetchNameListsFromAPI fetches player subscription expiry data from the remote API.
-// The API returns a JSON object of the form:
-//
-//	{"code": 200, "data": {"player1": "1730000000", "player2": "1740000000"}}
-//
-// Each value is a Unix timestamp string (seconds). If lowerCase is true, player names
-// are stored in lowercase for case-insensitive matching.
-func fetchNameListsFromAPI(lowerCase bool) (map[string]int64, error) {
-	resp, err := http.Get("https://hypixel.stoeaves.com/api/getNameLists")
+// queryPlayerSubscription queries the UUID system API to check a player's
+// subscription status. Returns:
+//   - allowed: true if the player is allowed to connect
+//   - nameUpdated: if not allowed, true means name was updated (use generatePlayerNameUpdated),
+//     false means subscription not found or expired (use generateKickMessage)
+func queryPlayerSubscription(name, uuid, planId string) (allowed bool, nameUpdated bool, err error) {
+	apiURL := fmt.Sprintf(
+		"https://hypixel.stoeaves.com/api/admin/uuidSystem?name=%s&uuid=%s&planId=%s",
+		url.QueryEscape(name), url.QueryEscape(uuid), url.QueryEscape(planId),
+	)
+
+	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("http get: %w", err)
+		return false, false, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer U9CNadUgyE3e0Msm93TDnYyukCn6t9mx7zcNVVeV2fyC0w2vM4")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, false, fmt.Errorf("http get: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected HTTP status: %s", resp.Status)
+		return false, false, fmt.Errorf("unexpected HTTP status: %s", resp.Status)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
+		return false, false, fmt.Errorf("read body: %w", err)
 	}
 
-	var apiResp nameListAPIResponse
+	var apiResp uuidSystemAPIResponse
 	err = json.Unmarshal(body, &apiResp)
 	if err != nil {
-		return nil, fmt.Errorf("unmarshal json: %w", err)
+		return false, false, fmt.Errorf("unmarshal json: %w", err)
 	}
 
-	if apiResp.Code != 200 {
-		return nil, fmt.Errorf("API returned non-200 code: %d", apiResp.Code)
-	}
+	switch apiResp.Code {
+	case 200:
+		// Check if expired: current time >= expiredTime means expired
+		if time.Now().Unix() >= apiResp.ExpiredTime {
+			return false, false, nil // expired → kick with generateKickMessage
+		}
+		return true, false, nil // valid → allow
 
-	result := make(map[string]int64, len(apiResp.Data))
-	for name, tsStr := range apiResp.Data {
-		ts, err := strconv.ParseInt(tsStr, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("parse timestamp for %s: %w", name, err)
-		}
-		if lowerCase {
-			name = strings.ToLower(name)
-		}
-		result[name] = ts
+	case 201:
+		return false, true, nil // name updated → kick with generatePlayerNameUpdated
+
+	case 404:
+		return false, false, nil // not found → kick with generateKickMessage
+
+	default:
+		return false, false, fmt.Errorf("API returned unexpected code: %d", apiResp.Code)
 	}
-	return result, nil
 }

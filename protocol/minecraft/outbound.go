@@ -538,7 +538,7 @@ func (o *Outbound) DialContext(context.Context, string, string) (net.Conn, error
 type uuidSystemAPIResponse struct {
 	Code int `json:"code"`
 	Data struct {
-		ExpiredTime int64 `json:"expiredTime"` // Unix timestamp in seconds
+		ExpiredTime string `json:"expiredTime"` // Unix timestamp in milliseconds (string)
 	} `json:"data"`
 }
 
@@ -635,9 +635,14 @@ func queryPlayerSubscription(logger *log.Logger, name, uuid, planId string) (all
 
 	switch apiResp.Code {
 	case 200:
+		expiredMs, err := strconv.ParseInt(apiResp.Data.ExpiredTime, 10, 64)
+		if err != nil {
+			return false, false, fmt.Errorf("parse expiredTime: %w", err)
+		}
 		nowUnix := time.Now().Unix()
-		logger.Info().Int64("now", nowUnix).Int64("expiredTime", apiResp.Data.ExpiredTime).Msg("Subscription expiry check")
-		if nowUnix >= apiResp.Data.ExpiredTime {
+		expiredUnix := expiredMs / 1000
+		logger.Info().Int64("now", nowUnix).Int64("expiredTime", expiredUnix).Msg("Subscription expiry check")
+		if nowUnix >= expiredUnix {
 			return false, false, nil // expired → kick with generateKickMessage
 		}
 		return true, false, nil // valid → allow

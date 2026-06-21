@@ -373,10 +373,16 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 				name := metadata.Minecraft.PlayerName
 				uuidStr := fmt.Sprintf("%x", metadata.Minecraft.UUID)
 				// When client does not provide UUID (pre-1.19 or hasUUID=false),
-				// fall back to using player name to avoid API 500 error.
+				// fetch it from Mojang API using the player name.
 				if uuidStr == "00000000000000000000000000000000" {
-					o.logger.Warn().Str("player", name).Msg("Player UUID not provided by client, using name fallback")
-					uuidStr = name
+					o.logger.Warn().Str("player", name).Msg("Player UUID not provided by client, fetching from Mojang")
+					var mojangErr error
+					uuidStr, mojangErr = fetchUUIDFromMojang(o.logger, name)
+					if mojangErr != nil {
+						o.access.RUnlock()
+						buffer.Release()
+						return common.Cause("fetch UUID from Mojang: ", mojangErr)
+					}
 				}
 				allowed, nameUpdated, err := queryPlayerSubscription(o.logger, name, uuidStr, o.config.Minecraft.NameAccess.PlanId)
 				if err != nil {
@@ -534,6 +540,53 @@ type uuidSystemAPIResponse struct {
 	Data struct {
 		ExpiredTime int64 `json:"expiredTime"` // Unix timestamp in seconds
 	} `json:"data"`
+}
+
+// mojangProfileResponse is the JSON structure returned by the Mojang API.
+type mojangProfileResponse struct {
+	ID   string `json:"id"`   // UUID without dashes
+	Name string `json:"name"` // player name
+}
+
+// fetchUUIDFromMojang fetches the player's UUID from the Mojang API.
+// Returns the UUID string without dashes (32 hex chars).
+func fetchUUIDFromMojang(logger *log.Logger, name string) (string, error) {
+	apiURL := "https://api.mojang.com/users/profiles/minecraft/" + url.PathEscape(name)
+
+	logger.Info().Str("name", name).Msg("Fetching UUID from Mojang API")
+
+	resp, err := http.DefaultClient.Get(apiURL)
+	if err != nil {
+		return "", fmt.Errorf("http get: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNoContent {
+		return "", fmt.Errorf("player not found at Mojang: %s", name)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("unexpected HTTP status %s: %s", resp.Status, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read body: %w", err)
+	}
+
+	logger.Info().Str("body", string(body)).Msg("Mojang API response")
+
+	var profile mojangProfileResponse
+	err = json.Unmarshal(body, &profile)
+	if err != nil {
+		return "", fmt.Errorf("unmarshal json: %w", err)
+	}
+
+	if profile.ID == "" {
+		return "", fmt.Errorf("Mojang returned empty UUID for %s", name)
+	}
+
+	return profile.ID, nil
 }
 
 // queryPlayerSubscription queries the UUID system API to check a player's

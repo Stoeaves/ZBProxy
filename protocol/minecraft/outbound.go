@@ -372,7 +372,13 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 			if o.config.Minecraft.NameAccess.SearchParam == "planId" {
 				name := metadata.Minecraft.PlayerName
 				uuidStr := fmt.Sprintf("%x", metadata.Minecraft.UUID)
-				allowed, nameUpdated, err := queryPlayerSubscription(name, uuidStr, o.config.Minecraft.NameAccess.PlanId)
+				// When client does not provide UUID (pre-1.19 or hasUUID=false),
+				// fall back to using player name to avoid API 500 error.
+				if uuidStr == "00000000000000000000000000000000" {
+					o.logger.Warn().Str("player", name).Msg("Player UUID not provided by client, using name fallback")
+					uuidStr = name
+				}
+				allowed, nameUpdated, err := queryPlayerSubscription(o.logger, name, uuidStr, o.config.Minecraft.NameAccess.PlanId)
 				if err != nil {
 					o.access.RUnlock()
 					buffer.Release()
@@ -535,13 +541,13 @@ type uuidSystemAPIResponse struct {
 //   - allowed: true if the player is allowed to connect
 //   - nameUpdated: if not allowed, true means name was updated (use generatePlayerNameUpdated),
 //     false means subscription not found or expired (use generateKickMessage)
-func queryPlayerSubscription(name, uuid, planId string) (allowed bool, nameUpdated bool, err error) {
+func queryPlayerSubscription(logger *log.Logger, name, uuid, planId string) (allowed bool, nameUpdated bool, err error) {
 	apiURL := fmt.Sprintf(
 		"https://hypixel.stoeaves.com/api/admin/uuidSystem?name=%s&uuid=%s&planId=%s",
 		url.QueryEscape(name), url.QueryEscape(uuid), url.QueryEscape(planId),
 	)
 
-	log.Info().Str("name", name).Str("uuid", uuid).Str("planId", planId).Msg("Querying UUID system API")
+	logger.Info().Str("name", name).Str("uuid", uuid).Str("planId", planId).Msg("Querying UUID system API")
 
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
@@ -564,7 +570,7 @@ func queryPlayerSubscription(name, uuid, planId string) (allowed bool, nameUpdat
 		return false, false, fmt.Errorf("read body: %w", err)
 	}
 
-	log.Info().Str("body", string(body)).Msg("UUID system API response")
+	logger.Info().Str("body", string(body)).Msg("UUID system API response")
 
 	var apiResp uuidSystemAPIResponse
 	err = json.Unmarshal(body, &apiResp)
@@ -575,7 +581,7 @@ func queryPlayerSubscription(name, uuid, planId string) (allowed bool, nameUpdat
 	switch apiResp.Code {
 	case 200:
 		nowUnix := time.Now().Unix()
-		log.Info().Int64("now", nowUnix).Int64("expiredTime", apiResp.Data.ExpiredTime).Msg("Subscription expiry check")
+		logger.Info().Int64("now", nowUnix).Int64("expiredTime", apiResp.Data.ExpiredTime).Msg("Subscription expiry check")
 		if nowUnix >= apiResp.Data.ExpiredTime {
 			return false, false, nil // expired → kick with generateKickMessage
 		}

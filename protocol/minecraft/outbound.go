@@ -541,6 +541,8 @@ func queryPlayerSubscription(name, uuid, planId string) (allowed bool, nameUpdat
 		url.QueryEscape(name), url.QueryEscape(uuid), url.QueryEscape(planId),
 	)
 
+	log.Info().Str("name", name).Str("uuid", uuid).Str("planId", planId).Msg("Querying UUID system API")
+
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
 		return false, false, fmt.Errorf("create request: %w", err)
@@ -562,6 +564,8 @@ func queryPlayerSubscription(name, uuid, planId string) (allowed bool, nameUpdat
 		return false, false, fmt.Errorf("read body: %w", err)
 	}
 
+	log.Info().Str("body", string(body)).Msg("UUID system API response")
+
 	var apiResp uuidSystemAPIResponse
 	err = json.Unmarshal(body, &apiResp)
 	if err != nil {
@@ -570,8 +574,9 @@ func queryPlayerSubscription(name, uuid, planId string) (allowed bool, nameUpdat
 
 	switch apiResp.Code {
 	case 200:
-		// Check if expired: current time >= expiredTime means expired
-		if time.Now().Unix() >= apiResp.Data.ExpiredTime {
+		nowUnix := time.Now().Unix()
+		log.Info().Int64("now", nowUnix).Int64("expiredTime", apiResp.Data.ExpiredTime).Msg("Subscription expiry check")
+		if nowUnix >= apiResp.Data.ExpiredTime {
 			return false, false, nil // expired → kick with generateKickMessage
 		}
 		return true, false, nil // valid → allow

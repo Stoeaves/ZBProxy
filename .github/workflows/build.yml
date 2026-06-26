@@ -121,7 +121,7 @@ jobs:
           merge-multiple: true
 
       - name: Upload Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         if: ${{ success() }}
         with:
           tag_name: ${{ github.event.inputs.version }}

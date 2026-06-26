@@ -36,8 +36,8 @@ func generateKickMessage(s *config.Outbound, name string) mcprotocol.Message {
 			{Text: "官网: "},
 			{
 				Color: mcprotocol.Gray, UnderLined: true,
-				Text: "https://hypixel.stoeaves.com"
-			}
+				Text: "https://hypixel.stoeaves.com",
+			},
 		},
 	}
 }
@@ -69,8 +69,8 @@ func generatePlayerNumberLimitExceededMessage(s *config.Outbound, name string) m
 			{Text: "官网: "},
 			{
 				Color: mcprotocol.Gray, UnderLined: true,
-				Text: "https://hypixel.stoeaves.com"
-			}
+				Text: "https://hypixel.stoeaves.com",
+			},
 		},
 	}
 }
@@ -102,8 +102,8 @@ func generatePlayerNameUpdated(s *config.Outbound, name string) mcprotocol.Messa
 			{Text: "官网: "},
 			{
 				Color: mcprotocol.Gray, UnderLined: true,
-				Text: "https://hypixel.stoeaves.com"
-			}
+				Text: "https://hypixel.stoeaves.com",
+			},
 		},
 	}
 }
@@ -134,8 +134,8 @@ func generatePlayerNotBoundQQ(s *config.Outbound, name string) mcprotocol.Messag
 			{Text: "官网: "},
 			{
 				Color: mcprotocol.Gray, UnderLined: true,
-				Text: "https://hypixel.stoeaves.com"
-			}
+				Text: "https://hypixel.stoeaves.com",
+			},
 		},
 	}
 }

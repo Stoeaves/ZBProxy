@@ -33,6 +33,11 @@ func generateKickMessage(s *config.Outbound, name string) mcprotocol.Message {
 				Color: mcprotocol.Aqua, UnderLined: true,
 				Text: "https://ifdian.net/a/stoeaves",
 			},
+			{Text: "官网: "},
+			{
+				Color: mcprotocol.Gray, UnderLined: true,
+				Text: "https://hypixel.stoeaves.com"
+			}
 		},
 	}
 }
@@ -61,6 +66,11 @@ func generatePlayerNumberLimitExceededMessage(s *config.Outbound, name string) m
 				Color: mcprotocol.Aqua, UnderLined: true,
 				Text: "https://ifdian.net/a/stoeaves",
 			},
+			{Text: "官网: "},
+			{
+				Color: mcprotocol.Gray, UnderLined: true,
+				Text: "https://hypixel.stoeaves.com"
+			}
 		},
 	}
 }
@@ -71,6 +81,8 @@ func generatePlayerNameUpdated(s *config.Outbound, name string) mcprotocol.Messa
 		Extra: []mcprotocol.Message{
 			{Bold: true, Color: mcprotocol.Red, Text: "温馨"},
 			{Bold: true, Text: "提示"},
+			{Text: " - "},
+			{Bold: true, Color: mcprotocol.Gold, Text: "Stiper"},
 			{Text: "\n"},
 
 			{Text: "已检测到您的游戏ID已修改\n"},
@@ -87,6 +99,43 @@ func generatePlayerNameUpdated(s *config.Outbound, name string) mcprotocol.Messa
 				Color: mcprotocol.Aqua, UnderLined: true,
 				Text: "https://ifdian.net/a/stoeaves",
 			},
+			{Text: "官网: "},
+			{
+				Color: mcprotocol.Gray, UnderLined: true,
+				Text: "https://hypixel.stoeaves.com"
+			}
+		},
+	}
+}
+
+func generatePlayerNotBoundQQ(s *config.Outbound, name string) mcprotocol.Message {
+	return mcprotocol.Message{
+		Color: mcprotocol.White,
+		Extra: []mcprotocol.Message{
+			{Bold: true, Color: mcprotocol.Red, Text: "温馨"},
+			{Bold: true, Text: "提示"},
+			{Text: " - "},
+			{Bold: true, Color: mcprotocol.Gold, Text: "Stiper"},
+			{Text: "\n"},
+
+			{Text: "您还未绑定QQ号\n"},
+			{Color: mcprotocol.LightPurple, Text: "请前往官网绑定QQ\n\n"},
+
+			{
+				Color: mcprotocol.Gray,
+				Text: fmt.Sprintf("时间戳: %d | 玩家名: %s\n",
+					time.Now().UnixMilli(), name),
+			},
+			{Text: "爱发电: "},
+			{
+				Color: mcprotocol.Aqua, UnderLined: true,
+				Text: "https://ifdian.net/a/stoeaves\n",
+			},
+			{Text: "官网: "},
+			{
+				Color: mcprotocol.Gray, UnderLined: true,
+				Text: "https://hypixel.stoeaves.com"
+			}
 		},
 	}
 }

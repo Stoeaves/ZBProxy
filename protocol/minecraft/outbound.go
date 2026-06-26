@@ -384,7 +384,7 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 						return common.Cause("fetch UUID from Mojang: ", mojangErr)
 					}
 				}
-				allowed, nameUpdated, err := queryPlayerSubscription(o.logger, name, uuidStr, o.config.Minecraft.NameAccess.PlanId)
+				allowed, nameUpdated, needBindQQ, err := queryPlayerSubscription(o.logger, name, uuidStr, o.config.Minecraft.NameAccess.PlanId)
 				if err != nil {
 					o.access.RUnlock()
 					buffer.Release()
@@ -392,9 +392,12 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 				}
 				if !allowed {
 					var msg []byte
-					if nameUpdated {
+					switch {
+					case nameUpdated:
 						msg, err = generatePlayerNameUpdated(o.config, metadata.Minecraft.PlayerName).MarshalJSON()
-					} else {
+					case needBindQQ:
+						msg, err = generatePlayerNotBoundQQ(o.config, metadata.Minecraft.PlayerName).MarshalJSON()
+					default:
 						msg, err = generateKickMessage(o.config, metadata.Minecraft.PlayerName).MarshalJSON()
 					}
 					if err != nil {
@@ -592,9 +595,10 @@ func fetchUUIDFromMojang(logger *log.Logger, name string) (string, error) {
 // queryPlayerSubscription queries the UUID system API to check a player's
 // subscription status. Returns:
 //   - allowed: true if the player is allowed to connect
-//   - nameUpdated: if not allowed, true means name was updated (use generatePlayerNameUpdated),
+//   - nameUpdated: if not allowed, true means name was updated (use generatePlayerNameUpdated)
+//   - needBindQQ: if not allowed and not nameUpdated, true means {code:403} (use generatePlayerNotBoundQQ),
 //     false means subscription not found or expired (use generateKickMessage)
-func queryPlayerSubscription(logger *log.Logger, name, uuid, planId string) (allowed bool, nameUpdated bool, err error) {
+func queryPlayerSubscription(logger *log.Logger, name, uuid, planId string) (allowed bool, nameUpdated bool, needBindQQ bool, err error) {
 	apiURL := fmt.Sprintf(
 		"https://hypixel.stoeaves.com/api/admin/uuidSystem?name=%s&uuid=%s&planId=%s",
 		url.QueryEscape(name), url.QueryEscape(uuid), url.QueryEscape(planId),
@@ -604,25 +608,25 @@ func queryPlayerSubscription(logger *log.Logger, name, uuid, planId string) (all
 
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
-		return false, false, fmt.Errorf("create request: %w", err)
+		return false, false, false, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer U9CNadUgyE3e0Msm93TDnYyukCn6t9mx7zcNVVeV2fyC0w2vM4")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return false, false, fmt.Errorf("http get: %w", err)
+		return false, false, false, fmt.Errorf("http get: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		logger.Warn().Str("status", resp.Status).Str("body", string(body)).Msg("UUID system API returned non-200")
-		return false, false, fmt.Errorf("unexpected HTTP status %s: %s", resp.Status, string(body))
+		return false, false, false, fmt.Errorf("unexpected HTTP status %s: %s", resp.Status, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return false, false, fmt.Errorf("read body: %w", err)
+		return false, false, false, fmt.Errorf("read body: %w", err)
 	}
 
 	logger.Info().Str("body", string(body)).Msg("UUID system API response")
@@ -630,30 +634,33 @@ func queryPlayerSubscription(logger *log.Logger, name, uuid, planId string) (all
 	var apiResp uuidSystemAPIResponse
 	err = json.Unmarshal(body, &apiResp)
 	if err != nil {
-		return false, false, fmt.Errorf("unmarshal json: %w", err)
+		return false, false, false, fmt.Errorf("unmarshal json: %w", err)
 	}
 
 	switch apiResp.Code {
 	case 200:
 		expiredMs, err := strconv.ParseInt(apiResp.Data.ExpiredTime, 10, 64)
 		if err != nil {
-			return false, false, fmt.Errorf("parse expiredTime: %w", err)
+			return false, false, false, fmt.Errorf("parse expiredTime: %w", err)
 		}
 		nowUnix := time.Now().Unix()
 		expiredUnix := expiredMs / 1000
 		logger.Info().Int64("now", nowUnix).Int64("expiredTime", expiredUnix).Msg("Subscription expiry check")
 		if nowUnix >= expiredUnix {
-			return false, false, nil // expired → kick with generateKickMessage
+			return false, false, false, nil // expired → kick with generateKickMessage
 		}
-		return true, false, nil // valid → allow
+		return true, false, false, nil // valid → allow
 
 	case 201:
-		return false, true, nil // name updated → kick with generatePlayerNameUpdated
+		return false, true, false, nil // name updated → kick with generatePlayerNameUpdated
+
+	case 403:
+		return false, false, true, nil // not bound QQ → kick with generatePlayerNotBoundQQ
 
 	case 404:
-		return false, false, nil // not found → kick with generateKickMessage
+		return false, false, false, nil // not found → kick with generateKickMessage
 
 	default:
-		return false, false, fmt.Errorf("API returned unexpected code: %d", apiResp.Code)
+		return false, false, false, fmt.Errorf("API returned unexpected code: %d", apiResp.Code)
 	}
 }

@@ -1,5 +1,5 @@
-github.com/fsnotify/fsnotify v1.9.0 h1:2Ml+OJNzbYCTzsxtv8vKSFD9PbJjmhYF14k/jKC7S9k=
-github.com/fsnotify/fsnotify v1.9.0/go.mod h1:8jBTzvmWwFyi3Pb8djgCCO5IBqzKJ/Jwo8TRcHyHii0=
+github.com/fsnotify/fsnotify v1.10.1 h1:b0/UzAf9yR5rhf3RPm9gf3ehBPpf0oZKIjtpKrx59Ho=
+github.com/fsnotify/fsnotify v1.10.1/go.mod h1:TLheqan6HD6GBK6PrDWyDPBaEV8LspOxvPSjC+bVfgo=
 github.com/phuslu/log v1.0.124 h1:jQMyco4WVPW+0gf6R0cdgtsnFu86z1MbcJv+oWuAXIA=
 github.com/phuslu/log v1.0.124/go.mod h1:F8osGJADo5qLK/0F88djWwdyoZZ9xDJQL1HYRHFEkS0=
 github.com/zhangyunhao116/fastrand v0.4.0 h1:86QB6Y+GGgLZRFRDCjMmAS28QULwspK9sgL5d1Bx3H4=

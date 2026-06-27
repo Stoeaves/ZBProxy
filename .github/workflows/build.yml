@@ -4,16 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Tag name of release"
+        description: 'Tag name of release'
 
 jobs:
   build:
     strategy:
       matrix:
         # Include amd64 on all platforms.
-        goos: [ windows, linux, darwin, freebsd ]
-        goarch: [ amd64, 386 ]
-        goamd64: [ v1, v3 ]
+        goos: [windows, linux, darwin, freebsd]
+        goarch: [amd64, 386]
+        goamd64: [v1, v3]
         exclude:
           # Exclude GOAMD64 v3 on i386
           - goarch: 386
@@ -112,7 +112,7 @@ jobs:
   Publish:
     permissions: write-all
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version }}
-    needs: [ build ]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -126,4 +126,4 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.version }}
           files: bin/*
-          prerelease: true
+          prerelease: false

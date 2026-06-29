@@ -600,7 +600,7 @@ func fetchUUIDFromMojang(logger *log.Logger, name string) (string, error) {
 //     false means subscription not found or expired (use generateKickMessage)
 func queryPlayerSubscription(logger *log.Logger, name, uuid, planId string) (allowed bool, nameUpdated bool, needBindQQ bool, err error) {
 	apiURL := fmt.Sprintf(
-		"https://hypixel.stoeaves.com/api/admin/uuidSystem?name=%s&uuid=%s&planId=%s",
+		"https://stiper.im/api/admin/uuidSystem?name=%s&uuid=%s&planId=%s",
 		url.QueryEscape(name), url.QueryEscape(uuid), url.QueryEscape(planId),
 	)
 

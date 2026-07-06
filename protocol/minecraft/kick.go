@@ -31,12 +31,12 @@ func generateKickMessage(s *config.Outbound, name string) mcprotocol.Message {
 			{Text: "爱发电: "},
 			{
 				Color: mcprotocol.Aqua, UnderLined: true,
-				Text: "https://ifdian.net/a/stoeaves",
+				Text: "https://ifdian.net/a/stoeaves\n",
 			},
 			{Text: "官网: "},
 			{
 				Color: mcprotocol.Gray, UnderLined: true,
-				Text: "https://hypixel.stoeaves.com",
+				Text: "https://stiper.im",
 			},
 		},
 	}
@@ -64,12 +64,12 @@ func generatePlayerNumberLimitExceededMessage(s *config.Outbound, name string) m
 			{Text: "爱发电: "},
 			{
 				Color: mcprotocol.Aqua, UnderLined: true,
-				Text: "https://ifdian.net/a/stoeaves",
+				Text: "https://ifdian.net/a/stoeaves\n",
 			},
 			{Text: "官网: "},
 			{
 				Color: mcprotocol.Gray, UnderLined: true,
-				Text: "https://hypixel.stoeaves.com",
+				Text: "https://stiper.im",
 			},
 		},
 	}
@@ -97,12 +97,12 @@ func generatePlayerNameUpdated(s *config.Outbound, name string) mcprotocol.Messa
 			{Text: "爱发电: "},
 			{
 				Color: mcprotocol.Aqua, UnderLined: true,
-				Text: "https://ifdian.net/a/stoeaves",
+				Text: "https://ifdian.net/a/stoeaves\n",
 			},
 			{Text: "官网: "},
 			{
 				Color: mcprotocol.Gray, UnderLined: true,
-				Text: "https://hypixel.stoeaves.com",
+				Text: "https://stiper.im",
 			},
 		},
 	}
@@ -134,7 +134,73 @@ func generatePlayerNotBoundQQ(s *config.Outbound, name string) mcprotocol.Messag
 			{Text: "官网: "},
 			{
 				Color: mcprotocol.Gray, UnderLined: true,
-				Text: "https://hypixel.stoeaves.com",
+				Text: "https://stiper.im",
+			},
+		},
+	}
+}
+
+func generateBanKickMessage(s *config.Outbound, name string) mcprotocol.Message {
+	return mcprotocol.Message{
+		Color: mcprotocol.White,
+		Extra: []mcprotocol.Message{
+			{Bold: true, Color: mcprotocol.Red, Text: "温馨"},
+			{Bold: true, Text: "提示"},
+			{Text: " - "},
+			{Bold: true, Color: mcprotocol.Gold, Text: "连接失败\n"},
+
+			{Text: "您的连接已被拒绝\n"},
+			{Text: "原因: "},
+			{Color: mcprotocol.LightPurple, Text: "您已被服务器封禁\n"},
+			{Text: "请前往官网查看详情\n\n"},
+
+			{
+				Color: mcprotocol.Gray,
+				Text: fmt.Sprintf("时间戳: %d | 玩家名: %s\n",
+					time.Now().UnixMilli(), name),
+			},
+			{Text: "爱发电: "},
+			{
+				Color: mcprotocol.Aqua, UnderLined: true,
+				Text: "https://ifdian.net/a/stoeaves\n",
+			},
+			{Text: "官网: "},
+			{
+				Color: mcprotocol.Gray, UnderLined: true,
+				Text: "https://stiper.im",
+			},
+		},
+	}
+}
+
+func generateUnknownErrorMessage(s *config.Outbound, name string, errorType string) mcprotocol.Message {
+	return mcprotocol.Message{
+		Color: mcprotocol.White,
+		Extra: []mcprotocol.Message{
+			{Bold: true, Color: mcprotocol.Red, Text: "温馨"},
+			{Bold: true, Text: "提示"},
+			{Text: " - "},
+			{Bold: true, Color: mcprotocol.Gold, Text: "连接失败\n"},
+
+			{Text: "您的连接已被拒绝\n"},
+			{Text: "原因: "},
+			{Color: mcprotocol.LightPurple, Text: "未知错误\n"},
+			{Text: "请将截图发送给管理员\n\n"},
+
+			{
+				Color: mcprotocol.Gray,
+				Text: fmt.Sprintf("时间戳: %d | 玩家名: %s | 错误类型: %s\n",
+					time.Now().UnixMilli(), name, errorType),
+			},
+			{Text: "爱发电: "},
+			{
+				Color: mcprotocol.Aqua, UnderLined: true,
+				Text: "https://ifdian.net/a/stoeaves\n",
+			},
+			{Text: "官网: "},
+			{
+				Color: mcprotocol.Gray, UnderLined: true,
+				Text: "https://stiper.im",
 			},
 		},
 	}

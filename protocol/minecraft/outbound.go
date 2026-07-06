@@ -1,6 +1,7 @@
 package minecraft
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -35,6 +36,20 @@ import (
 )
 
 var minecraftSRV = &adapter.SRVMetadata{ServiceName: "minecraft"}
+
+// bufferedServerConn wraps a net.Conn with a bytes.Buffer so that
+// already-read data can be replayed before reading from the real connection.
+type bufferedServerConn struct {
+	net.Conn
+	buf *bytes.Buffer
+}
+
+func (b *bufferedServerConn) Read(p []byte) (int, error) {
+	if b.buf.Len() > 0 {
+		return b.buf.Read(p)
+	}
+	return b.Conn.Read(p)
+}
 
 type Outbound struct {
 	access sync.RWMutex
@@ -384,11 +399,25 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 						return common.Cause("fetch UUID from Mojang: ", mojangErr)
 					}
 				}
-				allowed, nameUpdated, needBindQQ, err := queryPlayerSubscription(o.logger, name, uuidStr, o.config.Minecraft.NameAccess.PlanId)
-				if err != nil {
+				allowed, nameUpdated, needBindQQ, apiErr, err := queryPlayerSubscription(o.logger, name, uuidStr, o.config.Minecraft.NameAccess.PlanId)
+				if err != nil || apiErr != "" {
 					o.access.RUnlock()
 					buffer.Release()
-					return common.Cause("query player subscription: ", err)
+					msg, marshalErr := generateUnknownErrorMessage(o.config, metadata.Minecraft.PlayerName, apiErr).MarshalJSON()
+					if marshalErr != nil {
+						return common.Cause("generate unknown error message: ", marshalErr)
+					}
+					buffer.WriteByte(0)
+					mcprotocol.VarInt(len(msg)).WriteToBuffer(buffer)
+					writeErr := mcprotocol.Conn{Writer: common.UnwrapWriter(conn)}.WriteVectorizedPacket(buffer, msg)
+					if writeErr != nil {
+						return common.Cause("send unknown error kick packet: ", writeErr)
+					}
+					o.logger.Warn().Str("id", metadata.ConnectionID).Str("outbound", o.config.Name).
+						Str("player", metadata.Minecraft.PlayerName).Str("api_error", apiErr).Err(err).
+						Msg("Kicked by subscription API error")
+					conn.Conn.(*net.TCPConn).SetLinger(10)
+					return nil
 				}
 				if !allowed {
 					var msg []byte
@@ -515,7 +544,25 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 		cache.Advance(cache.Len()) // all written
 		o.logger.Info().Str("id", metadata.ConnectionID).Str("outbound", o.config.Name).
 			Str("player", metadata.Minecraft.PlayerName).Msg("Created Minecraft connection")
+		outboundConfig := o.config // capture before releasing lock
 		o.access.RUnlock()
+
+		// Read the first packet from server to detect ban disconnect
+		firstPacketRaw, readPacketErr := readServerFirstPacket(serverConn)
+		if readPacketErr == nil {
+			// Parse packet ID from the packet content (after VarInt length prefix)
+			packetID, _, idErr := mcprotocol.ReadVarIntFrom(bytes.NewReader(firstPacketRaw.content))
+			if idErr == nil && packetID == 0x00 { // Login Disconnect
+				o.handleServerDisconnect(firstPacketRaw, outboundConfig, metadata, serverConn, conn)
+				o.onlineCount.Add(-1)
+				return nil
+			}
+			// Not a disconnect — wrap serverConn so CopyConn replays the already-read packet
+			serverConn = &bufferedServerConn{
+				Conn: serverConn,
+				buf:  bytes.NewBuffer(append(firstPacketRaw.lengthBytes, firstPacketRaw.content...)),
+			}
+		}
 		o.onlineCount.Add(1)
 		err = bufio.CopyConn(serverConn, conn)
 		o.onlineCount.Add(-1)
@@ -539,10 +586,11 @@ func (o *Outbound) DialContext(context.Context, string, string) (net.Conn, error
 
 // uuidSystemAPIResponse is the JSON structure returned by the UUID system API.
 type uuidSystemAPIResponse struct {
-	Code int `json:"code"`
-	Data struct {
+	Code  int    `json:"code"`
+	Error string `json:"error,omitempty"` // error type when code is not 200
+	Data  *struct {
 		ExpiredTime string `json:"expiredTime"` // Unix timestamp in milliseconds (string)
-	} `json:"data"`
+	} `json:"data,omitempty"`
 }
 
 // mojangProfileResponse is the JSON structure returned by the Mojang API.
@@ -592,15 +640,130 @@ func fetchUUIDFromMojang(logger *log.Logger, name string) (string, error) {
 	return profile.ID, nil
 }
 
+// serverFirstPacket holds the raw bytes of the first packet read from a server connection.
+type serverFirstPacket struct {
+	lengthBytes []byte // Raw VarInt length prefix bytes
+	content     []byte // Packet content (packet ID + data)
+}
+
+// readServerFirstPacket reads exactly one Minecraft packet from conn and returns its raw bytes.
+func readServerFirstPacket(conn net.Conn) (*serverFirstPacket, error) {
+	var lengthBuf []byte
+	for i := 0; i < 5; i++ {
+		b := make([]byte, 1)
+		if _, err := io.ReadFull(conn, b); err != nil {
+			return nil, err
+		}
+		lengthBuf = append(lengthBuf, b[0])
+		if b[0]&0x80 == 0 {
+			break
+		}
+	}
+	length, _, err := mcprotocol.ReadVarIntFrom(bytes.NewReader(lengthBuf))
+	if err != nil {
+		return nil, err
+	}
+	content := make([]byte, length)
+	if _, err = io.ReadFull(conn, content); err != nil {
+		return nil, err
+	}
+	return &serverFirstPacket{lengthBytes: lengthBuf, content: content}, nil
+}
+
+// handleServerDisconnect processes a server disconnect (packet ID 0x00).
+// If the disconnect message indicates a ban, it calls the ban API and sends
+// a custom kick message to the client. Otherwise it forwards the original packet.
+func (o *Outbound) handleServerDisconnect(pkt *serverFirstPacket, config *config.Outbound, metadata *adapter.Metadata, serverConn net.Conn, clientConn net.Conn) {
+	// Parse packet ID and skip it
+	packetID, idLen, _ := mcprotocol.ReadVarIntFrom(bytes.NewReader(pkt.content))
+	if packetID != 0x00 {
+		// Not a disconnect, shouldn't reach here
+		clientConn.Close()
+		serverConn.Close()
+		return
+	}
+	remaining := pkt.content[idLen:]
+
+	// Parse the JSON Chat message in the disconnect packet
+	msgLen, msgLenRead, _ := mcprotocol.ReadVarIntFrom(bytes.NewReader(remaining))
+	var msg mcprotocol.Message
+	isBan := false
+	if msgLen > 0 && int(msgLen) <= len(remaining)-msgLenRead {
+		msgBytes := remaining[msgLenRead : msgLenRead+int(msgLen)]
+		if err := json.Unmarshal(msgBytes, &msg); err == nil && isBanMessage(&msg) {
+			isBan = true
+			// Send Telegram notification asynchronously
+			uuidStr := fmt.Sprintf("%x", metadata.Minecraft.UUID)
+			go o.banPlayer(metadata.Minecraft.PlayerName, uuidStr)
+			// Send custom ban message to client
+			msg = generateBanKickMessage(config, metadata.Minecraft.PlayerName)
+		}
+	}
+
+	if isBan {
+		// Send modified disconnect packet
+		msgJSON, _ := msg.MarshalJSON()
+		newBuf := buf.New()
+		newBuf.Reset(mcprotocol.MaxVarIntLen)
+		mcprotocol.VarInt(0x00).WriteToBuffer(newBuf)
+		mcprotocol.WriteString(newBuf, string(msgJSON))
+		clientMC := mcprotocol.Conn{Writer: common.UnwrapWriter(clientConn)}
+		_ = clientMC.WritePacket(newBuf)
+		newBuf.Release()
+	} else {
+		// Forward original disconnect as-is
+		raw := append(pkt.lengthBytes, pkt.content...)
+		_, _ = clientConn.Write(raw)
+	}
+	serverConn.Close()
+	clientConn.Close()
+}
+
+// banPlayer sends a Telegram Bot notification when a player is banned.
+// Fetches UUID from Mojang API for pre-1.19 clients that don't provide it.
+func (o *Outbound) banPlayer(name, uuid string) {
+	if uuid == "00000000000000000000000000000000" {
+		var err error
+		uuid, err = fetchUUIDFromMojang(o.logger, name)
+		if err != nil {
+			o.logger.Warn().Err(err).Str("player", name).Msg("Telegram Bot: failed to fetch UUID from Mojang, skipped notification")
+			return
+		}
+	}
+	text := fmt.Sprintf("🚫 玩家 %s 已被封禁\nUUID: %s", name, uuid)
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot8755019953:AAEGsKaRQV5Wrim_w4kjGn6yrkHhTy7hHCY/sendMessage?chat_id=5212251919&text=%s",
+		url.QueryEscape(text))
+	resp, err := http.DefaultClient.Post(apiURL, "", nil)
+	if err != nil {
+		o.logger.Warn().Err(err).Str("player", name).Str("uuid", uuid).Msg("Telegram Bot: failed to send notification")
+		return
+	}
+	resp.Body.Close()
+	o.logger.Info().Str("player", name).Str("uuid", uuid).Int("status", resp.StatusCode).Msg("Telegram Bot: ban notification sent")
+}
+
+// isBanMessage checks whether a Minecraft Chat message indicates a ban.
+func isBanMessage(msg *mcprotocol.Message) bool {
+	raw, err := json.Marshal(msg)
+	if err != nil {
+		return false
+	}
+	lower := strings.ToLower(string(raw))
+	return strings.Contains(lower, "banned") ||
+		strings.Contains(lower, "ban") ||
+		strings.Contains(lower, "suspended") ||
+		strings.Contains(lower, "your account")
+}
+
 // queryPlayerSubscription queries the UUID system API to check a player's
 // subscription status. Returns:
 //   - allowed: true if the player is allowed to connect
 //   - nameUpdated: if not allowed, true means name was updated (use generatePlayerNameUpdated)
 //   - needBindQQ: if not allowed and not nameUpdated, true means {code:403} (use generatePlayerNotBoundQQ),
 //     false means subscription not found or expired (use generateKickMessage)
-func queryPlayerSubscription(logger *log.Logger, name, uuid, planId string) (allowed bool, nameUpdated bool, needBindQQ bool, err error) {
+func queryPlayerSubscription(logger *log.Logger, name, uuid, planId string) (allowed bool, nameUpdated bool, needBindQQ bool, apiErr string, err error) {
 	apiURL := fmt.Sprintf(
-		"https://hypixel.stoeaves.com/api/admin/uuidSystem?name=%s&uuid=%s&planId=%s",
+		"https://stiper.im/api/admin/uuidSystem?name=%s&uuid=%s&planId=%s",
 		url.QueryEscape(name), url.QueryEscape(uuid), url.QueryEscape(planId),
 	)
 
@@ -608,25 +771,25 @@ func queryPlayerSubscription(logger *log.Logger, name, uuid, planId string) (all
 
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
-		return false, false, false, fmt.Errorf("create request: %w", err)
+		return false, false, false, "", fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer U9CNadUgyE3e0Msm93TDnYyukCn6t9mx7zcNVVeV2fyC0w2vM4")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return false, false, false, fmt.Errorf("http get: %w", err)
+		return false, false, false, "", fmt.Errorf("http get: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		logger.Warn().Str("status", resp.Status).Str("body", string(body)).Msg("UUID system API returned non-200")
-		return false, false, false, fmt.Errorf("unexpected HTTP status %s: %s", resp.Status, string(body))
+		return false, false, false, "", fmt.Errorf("unexpected HTTP status %s: %s", resp.Status, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return false, false, false, fmt.Errorf("read body: %w", err)
+		return false, false, false, "", fmt.Errorf("read body: %w", err)
 	}
 
 	logger.Info().Str("body", string(body)).Msg("UUID system API response")
@@ -634,33 +797,39 @@ func queryPlayerSubscription(logger *log.Logger, name, uuid, planId string) (all
 	var apiResp uuidSystemAPIResponse
 	err = json.Unmarshal(body, &apiResp)
 	if err != nil {
-		return false, false, false, fmt.Errorf("unmarshal json: %w", err)
+		return false, false, false, "", fmt.Errorf("unmarshal json: %w", err)
 	}
 
 	switch apiResp.Code {
 	case 200:
+		if apiResp.Data == nil {
+			return false, false, false, "", fmt.Errorf("missing data in API response")
+		}
 		expiredMs, err := strconv.ParseInt(apiResp.Data.ExpiredTime, 10, 64)
 		if err != nil {
-			return false, false, false, fmt.Errorf("parse expiredTime: %w", err)
+			return false, false, false, "", fmt.Errorf("parse expiredTime: %w", err)
 		}
 		nowUnix := time.Now().Unix()
 		expiredUnix := expiredMs / 1000
 		logger.Info().Int64("now", nowUnix).Int64("expiredTime", expiredUnix).Msg("Subscription expiry check")
 		if nowUnix >= expiredUnix {
-			return false, false, false, nil // expired → kick with generateKickMessage
+			return false, false, false, "", nil // expired → kick with generateKickMessage
 		}
-		return true, false, false, nil // valid → allow
+		return true, false, false, "", nil // valid → allow
 
 	case 201:
-		return false, true, false, nil // name updated → kick with generatePlayerNameUpdated
+		return false, true, false, apiResp.Error, nil // name updated → kick with generatePlayerNameUpdated
 
 	case 403:
-		return false, false, true, nil // not bound QQ → kick with generatePlayerNotBoundQQ
+		return false, false, true, apiResp.Error, nil // not bound QQ → kick with generatePlayerNotBoundQQ
 
 	case 404:
-		return false, false, false, nil // not found → kick with generateKickMessage
+		return false, false, false, apiResp.Error, nil // not found → kick with generateUnknownErrorMessage
 
 	default:
-		return false, false, false, fmt.Errorf("API returned unexpected code: %d", apiResp.Code)
+		if apiResp.Error != "" {
+			return false, false, false, apiResp.Error, nil // API returned error code with error type
+		}
+		return false, false, false, "", fmt.Errorf("API returned unexpected code: %d", apiResp.Code)
 	}
 }

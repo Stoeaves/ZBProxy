@@ -688,8 +688,10 @@ func (o *Outbound) handleServerDisconnect(pkt *serverFirstPacket, config *config
 	msgLen, msgLenRead, _ := mcprotocol.ReadVarIntFrom(bytes.NewReader(remaining))
 	var msg mcprotocol.Message
 	isBan := false
-	if msgLen > 0 && int(msgLen) <= len(remaining)-msgLenRead {
-		msgBytes := remaining[msgLenRead : msgLenRead+int(msgLen)]
+	n := int(msgLen)
+	nRead := int(msgLenRead)
+	if n > 0 && n <= len(remaining)-nRead {
+		msgBytes := remaining[nRead : nRead+n]
 		if err := json.Unmarshal(msgBytes, &msg); err == nil && isBanMessage(&msg) {
 			isBan = true
 			// Send Telegram notification asynchronously

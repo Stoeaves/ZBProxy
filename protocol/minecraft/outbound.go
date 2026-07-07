@@ -402,14 +402,15 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 				allowed, nameUpdated, needBindQQ, apiErr, err := queryPlayerSubscription(o.logger, name, uuidStr, o.config.Minecraft.NameAccess.PlanId)
 				if err != nil || apiErr != "" {
 					o.access.RUnlock()
-					buffer.Release()
 					msg, marshalErr := generateUnknownErrorMessage(o.config, metadata.Minecraft.PlayerName, apiErr).MarshalJSON()
 					if marshalErr != nil {
+						buffer.Release()
 						return common.Cause("generate unknown error message: ", marshalErr)
 					}
 					buffer.WriteByte(0)
 					mcprotocol.VarInt(len(msg)).WriteToBuffer(buffer)
 					writeErr := mcprotocol.Conn{Writer: common.UnwrapWriter(conn)}.WriteVectorizedPacket(buffer, msg)
+					buffer.Release()
 					if writeErr != nil {
 						return common.Cause("send unknown error kick packet: ", writeErr)
 					}

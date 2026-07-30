@@ -88,6 +88,16 @@ func (o *Outbound) Name() (name string) {
 	return
 }
 
+func (o *Outbound) OnlineCount() int32 {
+	return o.onlineCount.Load()
+}
+
+// Config returns the outbound configuration.
+// The returned pointer is only valid while no Reload is in progress.
+func (o *Outbound) Config() *config.Outbound {
+	return o.config
+}
+
 func (o *Outbound) PostInitialize(router adapter.Router, provider adapter.RouteResourceProvider) error {
 	var err error
 	if o.config.Minecraft.HostnameAccess.Mode != access.DefaultMode {

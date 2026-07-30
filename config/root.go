@@ -17,6 +17,7 @@ import (
 
 type _Root struct {
 	Log       Log
+	APIListen string // HTTP API listen address, e.g. ":8080", empty to disable
 	Services  []*Service
 	Router    Router
 	Outbounds []*Outbound
@@ -25,6 +26,7 @@ type _Root struct {
 
 type Root struct {
 	Log       Log
+	APIListen string // HTTP API listen address, e.g. ":8080", empty to disable
 	Services  []*Service
 	Router    Router
 	Outbounds []*Outbound
@@ -104,6 +106,7 @@ func (r *Root) reloadEventLoop() {
 		}
 
 		r.Log = rawConfig.Log
+		r.APIListen = rawConfig.APIListen
 		r.Services = rawConfig.Services
 		r.Router = rawConfig.Router
 		r.Outbounds = rawConfig.Outbounds

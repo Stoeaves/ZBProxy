@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/layou233/zbproxy/v3/adapter"
+	"github.com/layou233/zbproxy/v3/api"
 	"github.com/layou233/zbproxy/v3/common"
 	"github.com/layou233/zbproxy/v3/config"
 	"github.com/layou233/zbproxy/v3/protocol"
@@ -128,6 +129,16 @@ func (i *Instance) Start() error {
 			return common.Cause("start service ["+serviceConfig.Name+"]: ", err)
 		}
 		i.serviceMap[serviceConfig.Name] = newService
+	}
+
+	// start HTTP API server
+	if i.config.APIListen != "" {
+		go func() {
+			i.logger.Info().Str("listen", i.config.APIListen).Msg("Starting HTTP API server")
+			if err := api.Start(i.config.APIListen, i.outboundMap); err != nil {
+				i.logger.Error().Err(err).Msg("HTTP API server stopped")
+			}
+		}()
 	}
 
 	i.logger.Info().Str("duration", time.Now().Sub(startTime).String()).Msg("ZBProxy started")

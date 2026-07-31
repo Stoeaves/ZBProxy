@@ -202,6 +202,7 @@ func LoadConfigFromFile(ctx context.Context, filePath string, watch bool, logger
 	}
 	root := &Root{
 		Log:       rawConfig.Log,
+		APIListen: rawConfig.APIListen,
 		Services:  rawConfig.Services,
 		Router:    rawConfig.Router,
 		Outbounds: rawConfig.Outbounds,

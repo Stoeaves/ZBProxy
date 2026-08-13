@@ -37,6 +37,11 @@ import (
 
 var minecraftSRV = &adapter.SRVMetadata{ServiceName: "minecraft"}
 
+// httpClient is shared across all outbound API calls so keep-alive connections
+// are reused between logins, and its Timeout bounds every request so a hung
+// third-party API can't block player logins or leak goroutines forever.
+var httpClient = &http.Client{Timeout: 15 * time.Second}
+
 // bufferedServerConn wraps a net.Conn with a bytes.Buffer so that
 // already-read data can be replayed before reading from the real connection.
 type bufferedServerConn struct {
@@ -558,21 +563,28 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 		outboundConfig := o.config // capture before releasing lock
 		o.access.RUnlock()
 
-		// Read the first packet from server to detect ban disconnect
+		// Read the first packet from server to detect ban disconnect.
+		// If the backend is silent (timeout) or closed (EOF), disconnect the
+		// player right away instead of falling into CopyConn and hanging
+		// the login indefinitely.
 		firstPacketRaw, readPacketErr := readServerFirstPacket(serverConn)
-		if readPacketErr == nil {
-			// Parse packet ID from the packet content (after VarInt length prefix)
-			packetID, _, idErr := mcprotocol.ReadVarIntFrom(bytes.NewReader(firstPacketRaw.content))
-			if idErr == nil && packetID == 0x00 { // Login Disconnect
-				o.handleServerDisconnect(firstPacketRaw, outboundConfig, metadata, serverConn, conn)
-				o.onlineCount.Add(-1)
-				return nil
-			}
-			// Not a disconnect — wrap serverConn so CopyConn replays the already-read packet
-			serverConn = &bufferedServerConn{
-				Conn: serverConn,
-				buf:  bytes.NewBuffer(append(firstPacketRaw.lengthBytes, firstPacketRaw.content...)),
-			}
+		if readPacketErr != nil {
+			serverConn.Close()
+			o.logger.Warn().Str("id", metadata.ConnectionID).Str("player", metadata.Minecraft.PlayerName).
+				Err(readPacketErr).Msg("Server did not respond after login handshake, disconnecting")
+			return common.Cause("read first server packet: ", readPacketErr)
+		}
+		// Parse packet ID from the packet content (after VarInt length prefix)
+		packetID, _, idErr := mcprotocol.ReadVarIntFrom(bytes.NewReader(firstPacketRaw.content))
+		if idErr == nil && packetID == 0x00 { // Login Disconnect
+			o.handleServerDisconnect(firstPacketRaw, outboundConfig, metadata, serverConn, conn)
+			o.onlineCount.Add(-1)
+			return nil
+		}
+		// Not a disconnect — wrap serverConn so CopyConn replays the already-read packet
+		serverConn = &bufferedServerConn{
+			Conn: serverConn,
+			buf:  bytes.NewBuffer(append(firstPacketRaw.lengthBytes, firstPacketRaw.content...)),
 		}
 		o.onlineCount.Add(1)
 		err = bufio.CopyConn(serverConn, conn)
@@ -617,7 +629,7 @@ func fetchUUIDFromMojang(logger *log.Logger, name string) (string, error) {
 
 	logger.Info().Str("name", name).Msg("Fetching UUID from Mojang API")
 
-	resp, err := http.DefaultClient.Get(apiURL)
+	resp, err := httpClient.Get(apiURL)
 	if err != nil {
 		return "", fmt.Errorf("http get: %w", err)
 	}
@@ -657,8 +669,15 @@ type serverFirstPacket struct {
 	content     []byte // Packet content (packet ID + data)
 }
 
+// serverFirstPacketTimeout bounds the wait for the backend's first packet
+// after the login handshake. A backend that accepts the TCP connection but
+// never responds should not hang the player's login forever.
+const serverFirstPacketTimeout = 15 * time.Second
+
 // readServerFirstPacket reads exactly one Minecraft packet from conn and returns its raw bytes.
 func readServerFirstPacket(conn net.Conn) (*serverFirstPacket, error) {
+	_ = conn.SetReadDeadline(time.Now().Add(serverFirstPacketTimeout))
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 	var lengthBuf []byte
 	for i := 0; i < 5; i++ {
 		b := make([]byte, 1)
@@ -746,7 +765,7 @@ func (o *Outbound) banPlayer(name, uuid string) {
 	text := fmt.Sprintf("🚫 玩家 %s 已被封禁\nUUID: %s", name, uuid)
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot8755019953:AAEGsKaRQV5Wrim_w4kjGn6yrkHhTy7hHCY/sendMessage?chat_id=5212251919&text=%s",
 		url.QueryEscape(text))
-	resp, err := http.DefaultClient.Post(apiURL, "", nil)
+	resp, err := httpClient.Post(apiURL, "", nil)
 	if err != nil {
 		o.logger.Warn().Err(err).Str("player", name).Str("uuid", uuid).Msg("Telegram Bot: failed to send notification")
 		return
@@ -788,7 +807,7 @@ func queryPlayerSubscription(logger *log.Logger, name, uuid, planId string) (all
 	}
 	req.Header.Set("Authorization", "Bearer U9CNadUgyE3e0Msm93TDnYyukCn6t9mx7zcNVVeV2fyC0w2vM4")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return false, false, false, "", fmt.Errorf("http get: %w", err)
 	}

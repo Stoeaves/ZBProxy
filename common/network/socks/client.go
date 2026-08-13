@@ -7,9 +7,14 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/layou233/zbproxy/v3/common/network"
 )
+
+// defaultHandshakeTimeout bounds the SOCKS negotiation with the proxy server,
+// so a hung SOCKS server can't pin the connection goroutine indefinitely.
+const defaultHandshakeTimeout = 10 * time.Second
 
 type Client struct {
 	Dialer             network.Dialer
@@ -55,10 +60,12 @@ func (c *Client) DialContext(ctx context.Context, network, address string) (net.
 	if err != nil {
 		return nil, fmt.Errorf("socks: fail to dial to SOCKS server: %v", err)
 	}
+	_ = conn.SetDeadline(time.Now().Add(defaultHandshakeTimeout))
 	if err = c.Handshake(conn, conn, network, address); err != nil {
 		conn.Close()
 		return nil, err
 	}
+	_ = conn.SetDeadline(time.Time{}) // clear handshake deadline before relaying
 	return conn, nil
 }
 

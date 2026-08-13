@@ -6,9 +6,21 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
-var SystemDialer = &systemOutbound{}
+// DefaultDialTimeout bounds how long a dial to the backend (or SOCKS server)
+// may take. Without it, an unreachable or silently dropping backend can pin
+// connection goroutines and file descriptors for minutes until the OS TCP
+// timeout kicks in, which exhausts resources and causes latency spikes and
+// connection resets under load.
+const DefaultDialTimeout = 10 * time.Second
+
+var SystemDialer = &systemOutbound{
+	Dialer: net.Dialer{
+		Timeout: DefaultDialTimeout,
+	},
+}
 
 func NewSystemDialer(options *OutboundSocketOptions) Dialer {
 	if options == nil {
@@ -17,6 +29,7 @@ func NewSystemDialer(options *OutboundSocketOptions) Dialer {
 
 	out := &systemOutbound{
 		Dialer: net.Dialer{
+			Timeout: DefaultDialTimeout,
 			Control: NewDialerControlFromOptions(options),
 		},
 	}
